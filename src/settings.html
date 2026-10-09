@@ -1,0 +1,414 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snip Settings</title>
+<style>
+  :root {
+    --text: #1d1d1f;
+    --text-2: #6e6e73;
+    --text-3: #a1a1a6;
+    --group: rgba(255, 255, 255, 0.62);
+    --group-border: rgba(0, 0, 0, 0.07);
+    --divider: rgba(0, 0, 0, 0.07);
+    --control: rgba(0, 0, 0, 0.055);
+    --control-hover: rgba(0, 0, 0, 0.09);
+    --seg-active: #ffffff;
+    --seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+    --knob: #ffffff;
+    --track-off: rgba(0, 0, 0, 0.12);
+    --accent-fallback: #0a84ff;
+    --danger: #ff3b30;
+    --chip: rgba(0, 0, 0, 0.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --text: #f5f5f7;
+      --text-2: #98989d;
+      --text-3: #636366;
+      --group: rgba(255, 255, 255, 0.045);
+      --group-border: rgba(255, 255, 255, 0.07);
+      --divider: rgba(255, 255, 255, 0.07);
+      --control: rgba(255, 255, 255, 0.08);
+      --control-hover: rgba(255, 255, 255, 0.13);
+      --seg-active: rgba(255, 255, 255, 0.2);
+      --seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+      --knob: #f2f2f7;
+      --track-off: rgba(255, 255, 255, 0.16);
+      --danger: #ff453a;
+      --chip: rgba(255, 255, 255, 0.09);
+    }
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: transparent;
+    color: var(--text);
+    font: 13px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { padding: 0 20px 20px; }
+
+  header {
+    position: sticky; top: 0; z-index: 5;
+    height: 52px; margin: 0 -20px 6px; padding: 0 20px;
+    display: flex; align-items: center; justify-content: center;
+    gap: 8px;
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+  }
+  header h1 { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
+  header .ver { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+  .banner {
+    display: none;
+    margin: 0 0 12px;
+    padding: 9px 12px;
+    border-radius: 9px;
+    background: color-mix(in srgb, var(--danger) 14%, transparent);
+    color: var(--danger);
+    font-weight: 500;
+  }
+  .banner.show { display: block; }
+
+  h2 {
+    font-size: 11px; font-weight: 600;
+    color: var(--text-2);
+    margin: 18px 10px 6px;
+  }
+  h2:first-of-type { margin-top: 4px; }
+
+  .group {
+    background: var(--group);
+    border: 0.5px solid var(--group-border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .row {
+    min-height: 40px;
+    display: flex; align-items: center; gap: 12px;
+    padding: 7px 12px;
+  }
+  .row + .row { border-top: 0.5px solid var(--divider); }
+  .row .label { flex: 1; min-width: 0; }
+  .row .label small { display: block; color: var(--text-2); font-size: 11px; margin-top: 1px; }
+  .row.disabled .label, .row.disabled .path { opacity: 0.45; }
+
+  /* Toggle */
+  .switch { position: relative; width: 32px; height: 19px; flex: none; }
+  .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: default; }
+  .switch span {
+    position: absolute; inset: 0; border-radius: 10px;
+    background: var(--track-off);
+    transition: background 0.18s ease;
+  }
+  .switch span::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 15px; height: 15px; border-radius: 50%;
+    background: var(--knob);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 0 0 0.5px rgba(0, 0, 0, 0.05);
+    transition: transform 0.18s cubic-bezier(0.3, 0.7, 0.4, 1);
+  }
+  .switch input:checked + span { background: var(--accent-fallback); background: -apple-system-control-accent; }
+  .switch input:checked + span::after { transform: translateX(13px); }
+
+  /* Segmented control */
+  .seg {
+    display: inline-flex; padding: 2px; gap: 2px;
+    border-radius: 7px; background: var(--control);
+  }
+  .seg button {
+    all: unset;
+    padding: 3px 12px; border-radius: 5px;
+    font-size: 12px; font-weight: 500; color: var(--text);
+    transition: background 0.15s ease;
+  }
+  .seg button.on { background: var(--seg-active); box-shadow: var(--seg-shadow); }
+
+  /* Buttons */
+  .btn {
+    all: unset;
+    padding: 3px 10px; border-radius: 6px;
+    background: var(--control);
+    font-size: 12px; font-weight: 500;
+    white-space: nowrap;
+  }
+  .btn:hover { background: var(--control-hover); }
+  .btn:active { filter: brightness(0.92); }
+  .link { all: unset; color: var(--text-2); font-size: 12px; }
+  .link:hover { color: var(--text); }
+
+  /* Shortcut recorder */
+  .keys {
+    all: unset;
+    min-width: 92px; height: 24px; padding: 0 8px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 3px;
+    border-radius: 6px;
+    background: var(--chip);
+    font: 500 13px/1 -apple-system, system-ui, sans-serif;
+    letter-spacing: 0.04em;
+    transition: box-shadow 0.15s ease, background 0.15s ease;
+  }
+  .keys:hover { background: var(--control-hover); }
+  .keys kbd { font: inherit; }
+  .keys.rec {
+    box-shadow: 0 0 0 2px var(--accent-fallback);
+    box-shadow: 0 0 0 2px -apple-system-control-accent;
+    color: var(--text-2); letter-spacing: 0; font-size: 12px;
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 3.5px color-mix(in srgb, var(--accent-fallback) 45%, transparent); } }
+
+  /* Folder */
+  .path {
+    flex: 1; min-width: 0;
+    color: var(--text-2); font-size: 12px;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    direction: rtl; text-align: left;
+  }
+  .path bdi { direction: ltr; }
+  .ico { width: 16px; height: 16px; flex: none; opacity: 0.8; }
+
+  .tips {
+    margin: 18px 6px 0;
+    color: var(--text-2); font-size: 11.5px; line-height: 1.7;
+  }
+  .tips kbd {
+    display: inline-block; min-width: 18px; padding: 0 5px;
+    border-radius: 4px; background: var(--chip);
+    font: 500 11px/17px -apple-system, system-ui; text-align: center;
+  }
+  footer {
+    display: flex; justify-content: space-between; align-items: center;
+    margin: 18px 6px 0;
+  }
+</style>
+</head>
+<body>
+  <header id="drag">
+    <h1>Snip</h1><span class="ver" id="ver"></span>
+  </header>
+
+  <div class="banner" id="banner"></div>
+
+  <h2>Shortcuts</h2>
+  <div class="group">
+    <div class="row">
+      <div class="label">Screenshot</div>
+      <button class="keys" data-key="screenshot_hotkey"></button>
+    </div>
+    <div class="row">
+      <div class="label">Record video</div>
+      <button class="keys" data-key="record_hotkey"></button>
+    </div>
+  </div>
+
+  <h2>Screenshot</h2>
+  <div class="group">
+    <div class="row">
+      <div class="label">After capture</div>
+      <div class="seg" id="action">
+        <button data-v="clipboard">Copy</button>
+        <button data-v="save">Save</button>
+        <button data-v="both">Both</button>
+      </div>
+    </div>
+    <div class="row" id="shotDirRow">
+      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M1.5 4.5a1 1 0 0 1 1-1h3.6l1.4 1.5h6a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/></svg>
+      <div class="path" data-path="screenshot_dir"></div>
+      <button class="btn" data-open="screenshot_dir">Show</button>
+      <button class="btn" data-pick="screenshot_dir">Change…</button>
+    </div>
+    <div class="row">
+      <div class="label">Highlight windows<small>Hover a window and click to capture just that window</small></div>
+      <label class="switch"><input type="checkbox" data-bool="highlight_windows"><span></span></label>
+    </div>
+  </div>
+
+  <h2>Video</h2>
+  <div class="group">
+    <div class="row">
+      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M1.5 4.5a1 1 0 0 1 1-1h3.6l1.4 1.5h6a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/></svg>
+      <div class="path" data-path="video_dir"></div>
+      <button class="btn" data-open="video_dir">Show</button>
+      <button class="btn" data-pick="video_dir">Change…</button>
+    </div>
+    <div class="row">
+      <div class="label">Copy video to clipboard<small>Paste the file straight into Slack, Mail or Finder</small></div>
+      <label class="switch"><input type="checkbox" data-bool="video_copy_to_clipboard"><span></span></label>
+    </div>
+    <div class="row">
+      <div class="label">Show mouse clicks</div>
+      <label class="switch"><input type="checkbox" data-bool="video_show_clicks"><span></span></label>
+    </div>
+    <div class="row">
+      <div class="label">Record microphone</div>
+      <label class="switch"><input type="checkbox" data-bool="video_record_audio"><span></span></label>
+    </div>
+  </div>
+
+  <h2>General</h2>
+  <div class="group">
+    <div class="row">
+      <div class="label">Play capture sound</div>
+      <label class="switch"><input type="checkbox" data-bool="play_sound"><span></span></label>
+    </div>
+    <div class="row">
+      <div class="label">Show preview after capture<small>Thumbnail in the corner — click to open, drag into any app</small></div>
+      <label class="switch"><input type="checkbox" data-bool="show_preview"><span></span></label>
+    </div>
+    <div class="row">
+      <div class="label">Reveal saved files in Finder</div>
+      <label class="switch"><input type="checkbox" data-bool="reveal_after_save"><span></span></label>
+    </div>
+  </div>
+
+  <p class="tips">
+    In the overlay: drag to select · click a window to grab it ·
+    <kbd>Space</kbd> switch photo/video · <kbd>↩</kbd> full screen · <kbd>esc</kbd> cancel
+  </p>
+
+  <footer>
+    <button class="link" id="reset">Reset to defaults</button>
+    <button class="btn" id="quit">Quit Snip</button>
+  </footer>
+
+<script>
+(() => {
+  const post = (msg) => window.ipc.postMessage(JSON.stringify(msg));
+  const $ = (s) => document.querySelector(s);
+  const $$ = (s) => document.querySelectorAll(s);
+  let cfg = null;
+  let recording = null;
+  let bannerTimer = 0;
+
+  const MODS = [["control", "⌃"], ["alt", "⌥"], ["shift", "⇧"], ["super", "⌘"]];
+  const NAMED = {
+    Space: "Space", Enter: "↩", Tab: "⇥", Escape: "⎋", Backspace: "⌫", Delete: "⌦",
+    ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓",
+    Minus: "-", Equal: "=", BracketLeft: "[", BracketRight: "]", Backslash: "\\",
+    Semicolon: ";", Quote: "'", Backquote: "`", Comma: ",", Period: ".", Slash: "/",
+    Home: "↖", End: "↘", PageUp: "⇞", PageDown: "⇟",
+  };
+  const keyLabel = (code) =>
+    NAMED[code] ?? code.replace(/^Key/, "").replace(/^Digit/, "").replace(/^Numpad/, "Num ");
+
+  function pretty(hk) {
+    const parts = hk.split("+");
+    const code = parts.pop();
+    const mods = new Set(parts.map((p) => p.toLowerCase()));
+    return [...MODS.filter(([m]) => mods.has(m)).map(([, s]) => s), keyLabel(code)];
+  }
+
+  function render() {
+    $("#ver").textContent = cfg.version ? "v" + cfg.version : "";
+    const c = cfg.config;
+    $$(".keys").forEach((b) => {
+      if (b === recording) return;
+      b.classList.remove("rec");
+      b.innerHTML = pretty(c[b.dataset.key]).map((ch) => `<kbd>${ch}</kbd>`).join("");
+    });
+    $$("#action button").forEach((b) => b.classList.toggle("on", b.dataset.v === c.screenshot_action));
+    $("#shotDirRow").classList.toggle("disabled", c.screenshot_action === "clipboard");
+    $$("[data-bool]").forEach((i) => (i.checked = !!c[i.dataset.bool]));
+    $$("[data-path]").forEach((p) => {
+      const home = (c.screenshot_dir.match(/^\/Users\/[^/]+/) || [""])[0];
+      const v = c[p.dataset.path];
+      p.innerHTML = `<bdi></bdi>`;
+      p.firstChild.textContent = home && v.startsWith(home) ? "~" + v.slice(home.length) : v;
+      p.title = v;
+    });
+  }
+
+  function showError(msg) {
+    const b = $("#banner");
+    b.textContent = msg;
+    b.classList.add("show");
+    clearTimeout(bannerTimer);
+    bannerTimer = setTimeout(() => b.classList.remove("show"), 5000);
+  }
+
+  function save() { post({ type: "save", config: cfg.config }); }
+
+  window.snip = {
+    load(payload) {
+      cfg = payload;
+      render();
+      if (payload.error) showError(payload.error);
+    },
+  };
+
+  // --- shortcut recording ---
+  function stopRecording() {
+    if (!recording) return;
+    recording = null;
+    post({ type: "resume_hotkeys" });
+    render();
+  }
+  $$(".keys").forEach((b) =>
+    b.addEventListener("click", () => {
+      if (recording === b) return stopRecording();
+      stopRecording();
+      recording = b;
+      b.classList.add("rec");
+      b.textContent = "Type shortcut…";
+      post({ type: "suspend_hotkeys" });
+    })
+  );
+
+  document.addEventListener("keydown", (e) => {
+    if (recording) {
+      e.preventDefault();
+      if (/^(Meta|Control|Alt|Shift|CapsLock|Fn)/.test(e.code) || !e.code) return;
+      const mods = [];
+      if (e.ctrlKey) mods.push("control");
+      if (e.altKey) mods.push("alt");
+      if (e.shiftKey) mods.push("shift");
+      if (e.metaKey) mods.push("super");
+      if (e.code === "Escape" && !mods.length) return stopRecording();
+      if (!mods.length && !/^F\d+$/.test(e.code)) {
+        showError("Add a modifier like ⌘, ⌥ or ⌃ so the shortcut doesn't clash with typing.");
+        return;
+      }
+      cfg.config[recording.dataset.key] = [...mods, e.code].join("+");
+      recording = null;
+      post({ type: "resume_hotkeys" });
+      render();
+      save();
+      return;
+    }
+    if (e.metaKey && e.key === "w") { e.preventDefault(); post({ type: "close" }); }
+    if (e.key === "Escape") post({ type: "close" });
+  });
+  window.addEventListener("blur", stopRecording);
+
+  // --- controls ---
+  $$("#action button").forEach((b) =>
+    b.addEventListener("click", () => {
+      cfg.config.screenshot_action = b.dataset.v;
+      render();
+      save();
+    })
+  );
+  $$("[data-bool]").forEach((i) =>
+    i.addEventListener("change", () => {
+      cfg.config[i.dataset.bool] = i.checked;
+      save();
+    })
+  );
+  $$("[data-pick]").forEach((b) => b.addEventListener("click", () => post({ type: "pick_folder", field: b.dataset.pick })));
+  $$("[data-open]").forEach((b) => b.addEventListener("click", () => post({ type: "open_folder", field: b.dataset.open })));
+  $("#reset").addEventListener("click", () => post({ type: "reset" }));
+  $("#quit").addEventListener("click", () => post({ type: "quit" }));
+  $("#drag").addEventListener("mousedown", (e) => { if (e.button === 0) post({ type: "drag" }); });
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  post({ type: "ready" });
+})();
+</script>
+</body>
+</html>

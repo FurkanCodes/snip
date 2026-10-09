@@ -1,0 +1,35 @@
+[package]
+name = "snip"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "A tiny, instant screenshot and screen-recording tool for the macOS menu bar"
+repository = "https://github.com/FurkanCodes/snip"
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+dirs = "7.0.0"
+global-hotkey = "0.8.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tray-icon = "0.26.1"
+window-vibrancy = "0.8.1"
+winit = "0.30.13"
+wry = "0.57.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6.2"
+libc = "0.2.190"
+objc2 = "0.6.5"
+objc2-app-kit = "0.3.2"
+objc2-core-foundation = "0.3.2"
+objc2-core-graphics = "0.3.2"
+objc2-foundation = "0.3.2"
+objc2-quartz-core = "0.3.2"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
