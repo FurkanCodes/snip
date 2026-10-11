@@ -83,3 +83,30 @@ impl Config {
         std::fs::write(p, serde_json::to_vec_pretty(self).unwrap())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_fields_use_defaults() {
+        let c: Config = serde_json::from_str(r#"{"play_sound": false}"#).unwrap();
+        assert!(!c.play_sound);
+        assert_eq!(c.screenshot_hotkey, Config::default().screenshot_hotkey);
+        assert_eq!(c.screenshot_action, ShotAction::Clipboard);
+    }
+
+    #[test]
+    fn old_show_toast_key_still_loads() {
+        let c: Config = serde_json::from_str(r#"{"show_toast": false}"#).unwrap();
+        assert!(!c.show_preview);
+    }
+
+    #[test]
+    fn shot_actions() {
+        assert_eq!(serde_json::to_string(&ShotAction::Both).unwrap(), r#""both""#);
+        assert!(ShotAction::Clipboard.copies() && !ShotAction::Clipboard.saves());
+        assert!(!ShotAction::Save.copies() && ShotAction::Save.saves());
+        assert!(ShotAction::Both.copies() && ShotAction::Both.saves());
+    }
+}

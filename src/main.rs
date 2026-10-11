@@ -41,11 +41,12 @@ enum UserEvent {
 }
 
 /// A finished screenshot. `path` is the saved file, or a cache copy when the
-/// screenshot only went to the clipboard (so it can still be opened/dragged).
+/// screenshot only went to the clipboard (so the preview can open/drag it).
+/// `None` for clipboard-only screenshots with the preview off.
 struct Shot {
     copied: bool,
     saved: bool,
-    path: PathBuf,
+    path: Option<PathBuf>,
 }
 
 /// What the preview card is currently showing.
@@ -311,7 +312,7 @@ impl App {
         }
 
         // The card and toast would otherwise end up in the next capture.
-        self.hide_preview();
+        self.dismiss_preview();
         self.hide_toast();
         if !platform::has_screen_access() {
             log("selection blocked: no Screen Recording permission");
@@ -505,11 +506,14 @@ impl App {
                             platform::copy_png(&png);
                         }
                         let saved = cfg.screenshot_action.saves();
+                        if !saved && !cfg.show_preview {
+                            return Ok(Shot { copied, saved, path: None });
+                        }
                         let dir = if saved { cfg.screenshot_dir.clone() } else { cache_dir() };
                         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
                         let path = unique_path(&dir, "Screenshot", "png");
                         std::fs::write(&path, &png).map_err(|e| e.to_string())?;
-                        Ok(Shot { copied, saved, path })
+                        Ok(Shot { copied, saved, path: Some(path) })
                     });
                     let _ = proxy.send_event(UserEvent::ShotDone { rect, result, image: img });
                 });
@@ -639,6 +643,15 @@ impl App {
         }
     }
 
+    /// Hide the card without it having been opened or dragged: a clipboard-only
+    /// screenshot's cache copy is no longer needed.
+    fn dismiss_preview(&mut self) {
+        if let Some(s) = self.shown.as_ref().filter(|s| !s.saved) {
+            let _ = std::fs::remove_file(&s.path);
+        }
+        self.hide_preview();
+    }
+
     fn hide_preview(&mut self) {
         if let Some(card) = &self.preview {
             card.hide();
@@ -693,7 +706,8 @@ impl App {
                 shown.copied = true;
                 self.refresh_preview();
             }
-            In::Click(Part::Close) | In::Dropped => self.hide_preview(),
+            In::Click(Part::Close) => self.dismiss_preview(),
+            In::Dropped => self.hide_preview(),
         }
     }
 
@@ -952,18 +966,20 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Preview(input) => self.preview_input(el, input),
             UserEvent::ShotDone { rect, result, image } => match result {
                 Ok(shot) => {
-                    let text = match (shot.saved, shot.copied) {
-                        (true, true) => "✓  Copied & saved".to_string(),
-                        (true, false) => format!("✓  Saved to {}", short_dir(&shot.path)),
+                    let text = match (&shot.path, shot.saved, shot.copied) {
+                        (_, true, true) => "✓  Copied & saved".to_string(),
+                        (Some(p), true, false) => format!("✓  Saved to {}", short_dir(p)),
                         _ => "✓  Copied to clipboard".to_string(),
                     };
                     self.show_toast(el, &text, rect);
-                    if shot.saved && self.cfg.reveal_after_save {
-                        platform::reveal(&shot.path);
-                    }
-                    if self.cfg.show_preview {
-                        let shown = Shown { path: shot.path, video: false, saved: shot.saved, copied: shot.copied, secs: 0 };
-                        self.show_preview(shown, Some(&image), rect);
+                    if let Some(path) = shot.path {
+                        if shot.saved && self.cfg.reveal_after_save {
+                            platform::reveal(&path);
+                        }
+                        if self.cfg.show_preview {
+                            let shown = Shown { path, video: false, saved: shot.saved, copied: shot.copied, secs: 0 };
+                            self.show_preview(shown, Some(&image), rect);
+                        }
                     }
                 }
                 Err(e) => self.show_error(el, &format!("Screenshot failed: {e}"), rect),
@@ -1024,7 +1040,7 @@ impl ApplicationHandler<UserEvent> for App {
 
         if let Some(t) = self.preview_until {
             if now >= t {
-                self.hide_preview();
+                self.dismiss_preview();
             } else {
                 next = Some(next.map_or(t, |n| n.min(t)));
             }
@@ -1111,4 +1127,54 @@ fn main() {
         startup_action: std::env::args().nth(1),
     };
     event_loop.run_app(&mut app).expect("run");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn durations() {
+        assert_eq!(format_duration(0), "0:00");
+        assert_eq!(format_duration(65), "1:05");
+        assert_eq!(format_duration(3600), "60:00");
+    }
+
+    #[test]
+    fn sizes() {
+        assert_eq!(format_size(0), "1 KB");
+        assert_eq!(format_size(1536), "1 KB");
+        assert_eq!(format_size(5 << 20), "5.0 MB");
+        assert_eq!(format_size(3 << 29), "1.5 GB");
+    }
+
+    #[test]
+    fn hotkeys() {
+        assert!(parse_keys(&Config::default()).is_ok());
+        let same = Config { record_hotkey: Config::default().screenshot_hotkey, ..Config::default() };
+        assert!(parse_keys(&same).is_err());
+        let bad = Config { screenshot_hotkey: "super+NotAKey".into(), ..Config::default() };
+        assert!(parse_keys(&bad).unwrap_err().starts_with("Screenshot shortcut"));
+    }
+
+    #[test]
+    fn unique_paths_never_overwrite() {
+        let dir = std::env::temp_dir().join(format!("snip-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let first = unique_path(&dir, "Screenshot", "png");
+        assert_eq!(first.extension().unwrap(), "png");
+        std::fs::write(&first, b"").unwrap();
+        let second = unique_path(&dir, "Screenshot", "png");
+        assert_ne!(first, second);
+        assert!(!second.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn preview_texts_for_screenshots() {
+        let shot = |copied, saved| Shown { path: "/Users/me/Desktop/a.png".into(), video: false, saved, copied, secs: 0 };
+        assert_eq!(preview_texts(&shot(true, true)), ("Copied · saved to Desktop".into(), "Show in Finder", "Copied ✓"));
+        assert_eq!(preview_texts(&shot(true, false)), ("Copied to clipboard — ⌘V to paste".into(), "Save", "Copied ✓"));
+        assert_eq!(preview_texts(&shot(false, true)), ("Saved to Desktop".into(), "Show in Finder", "Copy"));
+    }
 }

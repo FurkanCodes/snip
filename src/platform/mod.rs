@@ -125,3 +125,33 @@ pub struct OverlayState {
     pub show_hint: bool,
     pub cursor: (f64, f64),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Rect;
+
+    #[test]
+    fn from_points_normalises() {
+        assert_eq!(Rect::from_points((10.0, 20.0), (4.0, 5.0)), Rect::new(4.0, 5.0, 6.0, 15.0));
+    }
+
+    #[test]
+    fn contains_is_half_open() {
+        let r = Rect::new(0.0, 0.0, 10.0, 10.0);
+        assert!(r.contains((0.0, 0.0)));
+        assert!(r.contains((9.9, 9.9)));
+        assert!(!r.contains((10.0, 5.0)));
+    }
+
+    #[test]
+    fn intersect() {
+        let a = Rect::new(0.0, 0.0, 10.0, 10.0);
+        assert_eq!(a.intersect(&Rect::new(5.0, 5.0, 10.0, 10.0)), Rect::new(5.0, 5.0, 5.0, 5.0));
+        assert!(a.intersect(&Rect::new(20.0, 20.0, 5.0, 5.0)).is_empty());
+    }
+
+    #[test]
+    fn round_snaps_outwards() {
+        assert_eq!(Rect::new(1.5, 2.2, 3.0, 4.0).round(), Rect::new(1.0, 2.0, 4.0, 5.0));
+    }
+}
