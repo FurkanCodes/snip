@@ -310,8 +310,9 @@ impl App {
             return;
         }
 
-        // The card would otherwise end up in the next capture.
+        // The card and toast would otherwise end up in the next capture.
         self.hide_preview();
+        self.hide_toast();
         if !platform::has_screen_access() {
             log("selection blocked: no Screen Recording permission");
             platform::request_screen_access();
@@ -579,7 +580,9 @@ impl App {
     }
 
     fn stop_recording(&mut self) {
-        let Some(rec) = self.recording.take() else { return };
+        let Some(mut rec) = self.recording.take() else { return };
+        // Signal now, not on the worker thread, so quitting can't skip it.
+        rec.recorder.stop();
         if let Some(b) = &self.border {
             b.ui.hide();
         }
@@ -593,7 +596,7 @@ impl App {
         let thumb = platform::capture_screen_rect(rect);
         let secs = rec.started.elapsed().as_secs();
         std::thread::spawn(move || {
-            let result = rec.recorder.stop_and_wait();
+            let result = rec.recorder.wait();
             let _ = proxy.send_event(UserEvent::RecordingDone { rect, result, thumb, secs });
         });
     }
@@ -715,6 +718,13 @@ impl App {
         self.toast_until = Some(Instant::now() + time);
     }
 
+    fn hide_toast(&mut self) {
+        if let Some(toast) = &self.toast {
+            toast.ui.hide();
+        }
+        self.toast_until = None;
+    }
+
     // --- settings ------------------------------------------------------------------
 
     fn open_settings(&mut self, el: &ActiveEventLoop) {
@@ -808,7 +818,10 @@ impl App {
                 }
             }
             "close" => self.settings = None,
-            "quit" => el.exit(),
+            "quit" => {
+                self.stop_recording();
+                el.exit();
+            }
             _ => {}
         }
     }
@@ -1003,10 +1016,7 @@ impl ApplicationHandler<UserEvent> for App {
 
         if let Some(t) = self.toast_until {
             if now >= t {
-                if let Some(toast) = &self.toast {
-                    toast.ui.hide();
-                }
-                self.toast_until = None;
+                self.hide_toast();
             } else {
                 next = Some(t);
             }

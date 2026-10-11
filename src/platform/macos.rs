@@ -782,9 +782,17 @@ impl Recorder {
         matches!(self.child.try_wait(), Ok(Some(_)))
     }
 
-    /// Ask screencapture to finish the file, then wait for it (blocking).
-    pub fn stop_and_wait(self) -> Result<PathBuf, String> {
-        unsafe { libc::kill(self.child.id() as i32, libc::SIGINT) };
+    /// Ask screencapture to finish the file. Returns immediately; screencapture
+    /// finalises the file on its own, even if Snip quits right after.
+    pub fn stop(&mut self) {
+        // Once reaped, the pid may already belong to another process.
+        if matches!(self.child.try_wait(), Ok(None)) {
+            unsafe { libc::kill(self.child.id() as i32, libc::SIGINT) };
+        }
+    }
+
+    /// Wait for screencapture to exit after `stop` (blocking).
+    pub fn wait(self) -> Result<PathBuf, String> {
         let out = self.child.wait_with_output().map_err(|e| e.to_string())?;
         if self.path.exists() {
             Ok(self.path)

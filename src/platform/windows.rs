@@ -135,7 +135,8 @@ impl Recorder {
     pub fn has_exited(&mut self) -> bool {
         true
     }
-    pub fn stop_and_wait(self) -> Result<PathBuf, String> {
+    pub fn stop(&mut self) {}
+    pub fn wait(self) -> Result<PathBuf, String> {
         Err(UNSUPPORTED.into())
     }
 }
