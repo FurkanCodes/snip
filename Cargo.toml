@@ -19,13 +19,27 @@ wry = "0.57.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
-libc = "0.2.190"
 objc2 = "0.6.5"
 objc2-app-kit = "0.3.2"
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["std", "AVMediaFormat", "AVVideoSettings"] }
 objc2-core-foundation = "0.3.2"
 objc2-core-graphics = "0.3.2"
+objc2-core-media = { version = "0.3.2", default-features = false, features = ["std", "CMTime"] }
 objc2-foundation = "0.3.2"
 objc2-quartz-core = "0.3.2"
+objc2-screen-capture-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "libc",
+    "objc2-av-foundation",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+    "objc2-core-media",
+    "SCRecordingOutput",
+    "SCScreenshotManager",
+    "SCShareableContent",
+    "SCStream",
+] }
 
 [profile.release]
 opt-level = 3

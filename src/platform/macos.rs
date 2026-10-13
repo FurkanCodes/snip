@@ -2,13 +2,11 @@
 //!
 //! * Overlays are non-activating panels raised above the menu bar and drawn
 //!   with Core Animation layers (GPU composited, nothing redrawn on the CPU).
-//! * Screenshots use CoreGraphics to grab everything *below* the overlay
-//!   window, so the overlay never has to be hidden first.
-//! * Video uses the system `screencapture -v` (hardware H.264 encoder).
+//! * Capturing (screenshots and video) lives in `macos_capture.rs`.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
@@ -21,9 +19,7 @@ use objc2_app_kit::{
     NSWindowCollectionBehavior,
 };
 use objc2_core_foundation::{CFRetained, CFType, CGPoint, CGRect, CGSize};
-use objc2_core_graphics::{
-    CGColor, CGImage, CGWindowImageOption, CGWindowListCopyWindowInfo, CGWindowListOption,
-};
+use objc2_core_graphics::{CGColor, CGImage, CGWindowListCopyWindowInfo, CGWindowListOption};
 use objc2_foundation::{
     NSArray, NSAttributedStringKey, NSObject, NSData, NSDictionary, NSNumber, NSSize, NSString, NSURL,
     ns_string,
@@ -380,7 +376,6 @@ impl OverlayView {
 }
 
 pub struct Overlay {
-    pub window_number: u32,
     panel: Retained<OverlayPanel>,
     dims: [Retained<CALayer>; 4],
     sel: Retained<CALayer>,
@@ -457,7 +452,6 @@ impl Overlay {
         let size_pill = Pill::new(&root, 11.0, true, screen.scale);
         let hint = Pill::new(&root, 12.5, false, screen.scale);
         Overlay {
-            window_number: panel.windowNumber() as u32,
             panel,
             dims,
             sel,
@@ -624,7 +618,7 @@ impl BorderWindow {
     }
 }
 
-// --- Capture ------------------------------------------------------------------
+// --- Images, clipboard, windows --------------------------------------------------
 
 /// A captured frame; CGImage is immutable and safe to move across threads.
 #[derive(Clone)]
@@ -635,43 +629,6 @@ impl Image {
     pub fn size(&self) -> (f64, f64) {
         (CGImage::width(Some(&self.0)) as f64, CGImage::height(Some(&self.0)) as f64)
     }
-}
-
-/// Capture `r` exactly as it looks on screen (used for video thumbnails).
-#[allow(deprecated)]
-pub fn capture_screen_rect(r: Rect) -> Option<Image> {
-    objc2_core_graphics::CGWindowListCreateImage(
-        cg(r),
-        CGWindowListOption::OptionOnScreenOnly,
-        0,
-        CGWindowImageOption::BestResolution,
-    )
-    .map(Image)
-}
-
-/// Capture `r` (global points), ignoring `below_window` and anything above it.
-#[allow(deprecated)]
-pub fn capture_rect(r: Rect, below_window: u32) -> Option<Image> {
-    objc2_core_graphics::CGWindowListCreateImage(
-        cg(r),
-        CGWindowListOption::OptionOnScreenBelowWindow,
-        below_window,
-        CGWindowImageOption::BestResolution,
-    )
-    .map(Image)
-}
-
-/// Capture a single window's content (no shadow, even if partly covered).
-#[allow(deprecated)]
-pub fn capture_window(id: u32) -> Option<Image> {
-    let null = CGRect::new(CGPoint::new(f64::INFINITY, f64::INFINITY), CGSize::ZERO);
-    objc2_core_graphics::CGWindowListCreateImage(
-        null,
-        CGWindowListOption::OptionIncludingWindow,
-        id,
-        CGWindowImageOption::BoundsIgnoreFraming | CGWindowImageOption::BestResolution,
-    )
-    .map(Image)
 }
 
 /// Encode as PNG tagged with the right DPI so it pastes at its on-screen size.
@@ -750,56 +707,16 @@ pub fn window_list() -> Vec<WinInfo> {
     out
 }
 
-// --- Video ---------------------------------------------------------------------
-
-pub struct Recorder {
-    child: Child,
-    pub path: PathBuf,
-}
-
-impl Recorder {
-    pub fn start(r: Rect, path: &Path, show_clicks: bool, audio: bool) -> std::io::Result<Recorder> {
-        let r = r.round();
-        let mut cmd = Command::new("/usr/sbin/screencapture");
-        cmd.arg("-v")
-            .arg("-x")
-            .arg(format!("-R{},{},{},{}", r.x, r.y, r.w, r.h));
-        if show_clicks {
-            cmd.arg("-k");
-        }
-        if audio {
-            cmd.arg("-g");
-        }
-        cmd.arg(path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped());
-        Ok(Recorder { child: cmd.spawn()?, path: path.to_owned() })
-    }
-
-    /// True if screencapture already quit on its own (e.g. no permission).
-    pub fn has_exited(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(Some(_)))
-    }
-
-    /// Ask screencapture to finish the file, then wait for it (blocking).
-    pub fn stop_and_wait(self) -> Result<PathBuf, String> {
-        unsafe { libc::kill(self.child.id() as i32, libc::SIGINT) };
-        let out = self.child.wait_with_output().map_err(|e| e.to_string())?;
-        if self.path.exists() {
-            Ok(self.path)
-        } else {
-            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            Err(if err.is_empty() { "Recording failed".into() } else { err })
-        }
-    }
-}
-
 // --- Misc ------------------------------------------------------------------------
 
 /// Run `f` inside an autorelease pool (for AppKit work on worker threads).
 pub fn with_pool<R>(f: impl FnOnce() -> R) -> R {
     objc2::rc::autoreleasepool(|_| f())
+}
+
+/// The window number of a winit window, as ScreenCaptureKit and CoreGraphics know it.
+pub fn window_id(window: &Window) -> u32 {
+    ns_view(window).window().map_or(0, |w| w.windowNumber() as u32)
 }
 
 /// Native look for the settings window: sidebar vibrancy, centred, and kept
@@ -879,8 +796,8 @@ unsafe extern "C" {
     fn CGRequestScreenCaptureAccess() -> bool;
 }
 
-/// Whether we may capture other apps' windows. Without it macOS silently
-/// returns just the wallpaper, so check before every capture.
+/// Whether we may capture other apps' windows. Without it every capture
+/// fails, so check first and send the user to System Settings instead.
 pub fn has_screen_access() -> bool {
     unsafe { CGPreflightScreenCaptureAccess() }
 }

@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use winit::window::Window;
 
-use super::{OverlayState, PreviewContent, PreviewInput, PreviewPart, Rect, Screen, WinInfo};
+use super::{OverlayState, PreviewContent, PreviewInput, PreviewPart, Rect, Screen, Source, WinInfo};
 
 const UNSUPPORTED: &str = "not supported on this platform yet";
 
@@ -37,13 +37,11 @@ pub fn cursor_pos() -> (f64, f64) {
     (0.0, 0.0)
 }
 
-pub struct Overlay {
-    pub window_number: u32,
-}
+pub struct Overlay;
 
 impl Overlay {
     pub fn new(_index: usize, _screen: &Screen) -> Overlay {
-        Overlay { window_number: 0 }
+        Overlay
     }
     pub fn show(&self, _key: bool) {}
     pub fn make_key(&self) {}
@@ -82,10 +80,6 @@ impl Image {
     }
 }
 
-pub fn capture_screen_rect(_r: Rect) -> Option<Image> {
-    None
-}
-
 pub fn visible_area(_p: (f64, f64)) -> Rect {
     Rect::default()
 }
@@ -104,12 +98,8 @@ impl PreviewCard {
     pub fn hide(&self) {}
 }
 
-pub fn capture_rect(_r: Rect, _below_window: u32) -> Option<Image> {
-    None
-}
-
-pub fn capture_window(_id: u32) -> Option<Image> {
-    None
+pub fn capture(_source: Source, _keep: &[u32]) -> Result<Image, String> {
+    Err(UNSUPPORTED.into())
 }
 
 pub fn encode_png(_img: &Image, _points_wide: f64) -> Option<Vec<u8>> {
@@ -129,10 +119,10 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    pub fn start(_r: Rect, _path: &Path, _clicks: bool, _audio: bool) -> std::io::Result<Recorder> {
+    pub fn start(_r: Rect, _path: &Path, _clicks: bool, _audio: bool, _keep: Vec<u32>) -> std::io::Result<Recorder> {
         Err(std::io::Error::other(UNSUPPORTED))
     }
-    pub fn has_exited(&mut self) -> bool {
+    pub fn has_failed(&self) -> bool {
         true
     }
     pub fn stop_and_wait(self) -> Result<PathBuf, String> {
@@ -142,6 +132,10 @@ impl Recorder {
 
 pub fn with_pool<R>(f: impl FnOnce() -> R) -> R {
     f()
+}
+
+pub fn window_id(_window: &Window) -> u32 {
+    0
 }
 
 pub fn prepare_settings_window(window: &Window) {

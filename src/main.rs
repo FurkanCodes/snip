@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use config::Config;
 use global_hotkey::hotkey::HotKey;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
-use platform::{OverlayState, Rect, Screen, WinInfo};
+use platform::{OverlayState, Rect, Screen, Source, WinInfo};
 use tray_icon::menu::accelerator::Accelerator;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
@@ -36,7 +36,9 @@ enum UserEvent {
     Ipc(String),
     Overlay(usize, platform::OverlayInput),
     Preview(platform::PreviewInput),
-    ShotDone { rect: Rect, result: Result<Shot, String>, image: platform::Image },
+    /// The screenshot was taken; it is still being encoded and saved.
+    Captured,
+    ShotDone { rect: Rect, result: Result<Shot, String> },
     RecordingDone { rect: Rect, result: Result<PathBuf, String>, thumb: Option<platform::Image>, secs: u64 },
 }
 
@@ -46,6 +48,7 @@ struct Shot {
     copied: bool,
     saved: bool,
     path: PathBuf,
+    image: platform::Image,
 }
 
 /// What the preview card is currently showing.
@@ -479,26 +482,20 @@ impl App {
         };
         match sel.mode {
             Mode::Shot => {
-                // Grab while the overlay is still up: we capture *below* it.
-                let below = self.overlays[sel.active].ui.window_number;
-                let img = match &target {
-                    Target::Region(r) => platform::capture_rect(*r, below),
-                    Target::Window(w) => platform::capture_window(w.id),
-                };
+                // Captures leave out Snip's own windows, so the overlay can go first.
                 self.hide_overlays();
-                log(format!("capture {:?}: {}", rect, if img.is_some() { "ok" } else { "no image" }));
-                let Some(img) = img else {
-                    self.show_error(el, "Capture failed — allow Screen Recording in System Settings", rect);
-                    return;
+                let source = match &target {
+                    Target::Region(r) => Source::Region(*r),
+                    Target::Window(w) => Source::Window(w.id),
                 };
-                if self.cfg.play_sound {
-                    platform::play_capture_sound();
-                }
+                let keep = self.kept_windows();
                 let cfg = self.cfg.clone();
                 let proxy = self.proxy.clone();
                 std::thread::spawn(move || {
                     let result = platform::with_pool(|| {
-                        let png = platform::encode_png(&img, rect.w).ok_or("Couldn't encode image")?;
+                        let image = platform::capture(source, &keep)?;
+                        let _ = proxy.send_event(UserEvent::Captured);
+                        let png = platform::encode_png(&image, rect.w).ok_or("Couldn't encode image")?;
                         let copied = cfg.screenshot_action.copies();
                         if copied {
                             platform::copy_png(&png);
@@ -508,9 +505,9 @@ impl App {
                         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
                         let path = unique_path(&dir, "Screenshot", "png");
                         std::fs::write(&path, &png).map_err(|e| e.to_string())?;
-                        Ok(Shot { copied, saved, path })
+                        Ok(Shot { copied, saved, path, image })
                     });
-                    let _ = proxy.send_event(UserEvent::ShotDone { rect, result, image: img });
+                    let _ = proxy.send_event(UserEvent::ShotDone { rect, result });
                 });
             }
             Mode::Video => {
@@ -524,6 +521,11 @@ impl App {
         }
     }
 
+    /// Snip's own windows that captures should still show (normally they're left out).
+    fn kept_windows(&self) -> Vec<u32> {
+        self.settings.iter().map(|(_, w)| platform::window_id(w)).collect()
+    }
+
     // --- recording -----------------------------------------------------------------
 
     fn start_recording(&mut self, el: &ActiveEventLoop, rect: Rect) {
@@ -535,6 +537,7 @@ impl App {
             &path,
             self.cfg.video_show_clicks,
             self.cfg.video_record_audio,
+            self.kept_windows(),
         ) {
             Ok(r) => {
                 log(format!("recording started {rect:?} -> {path:?}"));
@@ -589,10 +592,11 @@ impl App {
         self.update_menu();
         let proxy = self.proxy.clone();
         let rect = rec.rect;
-        // The last frame doubles as the preview thumbnail.
-        let thumb = platform::capture_screen_rect(rect);
+        let keep = self.kept_windows();
         let secs = rec.started.elapsed().as_secs();
         std::thread::spawn(move || {
+            // The last frame doubles as the preview thumbnail.
+            let thumb = platform::with_pool(|| platform::capture(Source::Region(rect), &keep).ok());
             let result = rec.recorder.stop_and_wait();
             let _ = proxy.send_event(UserEvent::RecordingDone { rect, result, thumb, secs });
         });
@@ -897,6 +901,14 @@ impl ApplicationHandler<UserEvent> for App {
                 let mode = if a.starts_with("--test-shot") { Mode::Shot } else { Mode::Video };
                 self.start_selection(el, mode);
                 self.finish(el, Target::Region(Rect::new(n[0], n[1], n[2], n[3])));
+                // --test-record=x,y,w,h,secs stops on its own.
+                if let Some(&secs) = n.get(4) {
+                    let proxy = self.proxy.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_secs_f64(secs));
+                        let _ = proxy.send_event(UserEvent::Menu(MenuEvent { id: "stop".into() }));
+                    });
+                }
             }
             _ => {}
         }
@@ -937,7 +949,12 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Ipc(msg) => self.on_ipc(el, &msg),
             UserEvent::Overlay(i, input) => self.overlay_input(el, i, input),
             UserEvent::Preview(input) => self.preview_input(el, input),
-            UserEvent::ShotDone { rect, result, image } => match result {
+            UserEvent::Captured => {
+                if self.cfg.play_sound {
+                    platform::play_capture_sound();
+                }
+            }
+            UserEvent::ShotDone { rect, result } => match result.inspect(|_| log(format!("screenshot {rect:?}: ok"))) {
                 Ok(shot) => {
                     let text = match (shot.saved, shot.copied) {
                         (true, true) => "✓  Copied & saved".to_string(),
@@ -950,7 +967,7 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                     if self.cfg.show_preview {
                         let shown = Shown { path: shot.path, video: false, saved: shot.saved, copied: shot.copied, secs: 0 };
-                        self.show_preview(shown, Some(&image), rect);
+                        self.show_preview(shown, Some(&shot.image), rect);
                     }
                 }
                 Err(e) => self.show_error(el, &format!("Screenshot failed: {e}"), rect),
@@ -1021,9 +1038,9 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         if let Some(rec) = &mut self.recording {
-            if rec.recorder.has_exited() {
-                log("screencapture exited on its own");
-                // screencapture quit on its own (e.g. permission denied).
+            if rec.recorder.has_failed() {
+                // e.g. Screen Recording permission revoked, or the display went away.
+                log("recording stopped by the system");
                 self.stop_recording();
             } else {
                 let secs = rec.started.elapsed().as_secs();

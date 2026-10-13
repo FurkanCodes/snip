@@ -6,6 +6,10 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::*;
 #[cfg(target_os = "macos")]
+mod macos_capture;
+#[cfg(target_os = "macos")]
+pub use macos_capture::*;
+#[cfg(target_os = "macos")]
 mod macos_preview;
 #[cfg(target_os = "macos")]
 pub use macos_preview::*;
@@ -81,6 +85,15 @@ pub struct Screen {
 pub struct WinInfo {
     pub id: u32,
     pub rect: Rect,
+}
+
+/// What a screenshot captures.
+#[derive(Clone, Copy, Debug)]
+pub enum Source {
+    /// A region in global points, on a single display.
+    Region(Rect),
+    /// One window, by window number, even where other windows cover it.
+    Window(u32),
 }
 
 /// Clickable regions of the post-capture preview card.

@@ -1,0 +1,4 @@
+[env]
+# Snip needs macOS 15 (ScreenCaptureKit recording output); keep the binary's
+# minimum OS in step with LSMinimumSystemVersion in bundle.sh.
+MACOSX_DEPLOYMENT_TARGET = "15.0"

@@ -28,7 +28,7 @@ Press a hotkey and drag a rectangle (or click a window): the screenshot is on yo
 
 ## Requirements
 
-- macOS 12 or later (Apple silicon or Intel)
+- macOS 15 or later (Apple silicon or Intel)
 - [Rust](https://rustup.rs) 1.85 or later to build it
 
 Windows support is planned; see [Roadmap](#roadmap).
@@ -50,7 +50,7 @@ macOS requires permission before any app can capture the screen.
 1. Press **⌘⇧2**. Snip opens **System Settings → Privacy & Security → Screen & System Audio Recording**.
 2. Turn on **Snip**, then choose **Quit & Reopen**.
 
-Without this permission macOS only lets Snip see your wallpaper, and recordings fail.
+Without this permission, screenshots and recordings fail.
 
 To start Snip at login, add it under **System Settings → General → Login Items**.
 
@@ -97,7 +97,7 @@ Open **Settings…** from the menu-bar icon. Changes apply immediately and are s
 
 | Problem | Fix |
 |---|---|
-| Screenshots show only the wallpaper, or recordings fail | Snip has no Screen Recording permission. Turn it on (see [above](#screen-recording-permission)) and reopen Snip. |
+| Screenshots or recordings fail with a permission error | Snip has no Screen Recording permission. Turn it on (see [above](#screen-recording-permission)) and reopen Snip. |
 | The permission is on but captures still fail | Reset it with `tccutil reset ScreenCapture dev.snip.app`, then grant it again. |
 | A hotkey does nothing | Another app may already use that shortcut. Pick a different one in Settings. |
 | Anything else | Check the log at `~/Library/Logs/Snip.log`. |
@@ -105,8 +105,8 @@ Open **Settings…** from the menu-bar icon. Changes apply immediately and are s
 ## How it works
 
 - **Overlay:** one borderless, *non-activating* `NSPanel` per display, drawn with Core Animation layers, so redrawing the selection costs almost no CPU. A non-activating panel can take the keyboard without activating the app. That matters because macOS 14+ doesn't let background apps activate themselves.
-- **Screenshots:** CoreGraphics captures everything *below* the overlay window, so the overlay never has to be hidden first. The PNG is tagged with the screen's DPI, so it pastes at its on-screen size.
-- **Video:** the system `screencapture -v` tool, so encoding runs on the hardware H.264 encoder. Snip stops it with `SIGINT` so the file is finalised cleanly.
+- **Screenshots:** ScreenCaptureKit's `SCScreenshotManager` captures the region or window with Snip's own windows filtered out, so the overlay never shows up in the image. The PNG is tagged with the screen's DPI, so it pastes at its on-screen size.
+- **Video:** an `SCStream` with an `SCRecordingOutput` writes a QuickTime movie on the hardware H.264 encoder. Click highlighting and microphone audio come from ScreenCaptureKit too, and the red border and stop pill are filtered out of the recording.
 - **Settings UI:** HTML in the system WebView, created only while the window is open. It costs nothing when closed.
 - **Signing:** `bundle.sh` signs ad-hoc but pins the signature to the bundle ID (`dev.snip.app`), so macOS remembers the Screen Recording permission across rebuilds. Set `SIGN_ID="Apple Development: …"` to sign with a real certificate instead.
 
@@ -120,7 +120,8 @@ src/config.rs                   settings model and JSON persistence
 src/icons.rs                    menu-bar icons, drawn in code
 src/settings.html               settings UI
 src/platform/mod.rs             portable types (Rect, Screen, overlay and preview types)
-src/platform/macos.rs           overlay panel, capture, clipboard, recorder
+src/platform/macos.rs           overlay panel, floating windows, clipboard
+src/platform/macos_capture.rs   screenshots and recording (ScreenCaptureKit)
 src/platform/macos_preview.rs   post-capture preview card
 src/platform/windows.rs         Windows stub with the same API
 bundle.sh                       builds, signs and installs Snip.app
@@ -137,7 +138,7 @@ cargo run -- --settings      # open the settings window
 
 When run from source, macOS checks the Screen Recording permission of your **terminal app**, not Snip. Quit the installed Snip first so the two don't fight over the hotkeys.
 
-Debug builds also accept `--test-shot=x,y,w,h` and `--test-record=x,y,w,h` to run the capture pipeline on a fixed region without using the mouse.
+Debug builds also accept `--test-shot=x,y,w,h` and `--test-record=x,y,w,h[,secs]` to run the capture pipeline on a fixed region without using the mouse. With `secs`, the recording stops by itself.
 
 ## Roadmap
 
