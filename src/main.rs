@@ -1,6 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod config;
+mod editor;
 mod icons;
 mod platform;
 
@@ -39,6 +40,11 @@ enum UserEvent {
     /// The screenshot was taken; it is still being encoded and saved.
     Captured,
     ShotDone { rect: Rect, result: Result<Shot, String> },
+    /// A message from the editor page with this id.
+    EditorIpc(u64, String),
+    EditorCopied(u64, Result<(), String>),
+    /// An edited screenshot was written back (and re-copied if it had been copied).
+    EditSaved(u64, Result<Shot, String>),
     RecordingDone { rect: Rect, result: Result<PathBuf, String>, thumb: Option<platform::Image>, secs: u64 },
 }
 
@@ -130,6 +136,8 @@ struct App {
     preview_until: Option<Instant>,
     /// Webview first so it drops before its window.
     settings: Option<(WebView, Window)>,
+    editors: Vec<editor::Editor>,
+    next_editor: u64,
     startup_action: Option<String>,
 }
 
@@ -523,7 +531,8 @@ impl App {
 
     /// Snip's own windows that captures should still show (normally they're left out).
     fn kept_windows(&self) -> Vec<u32> {
-        self.settings.iter().map(|(_, w)| platform::window_id(w)).collect()
+        let settings = self.settings.iter().map(|(_, w)| platform::window_id(w));
+        settings.chain(self.editors.iter().map(|e| e.window_id())).collect()
     }
 
     // --- recording -----------------------------------------------------------------
@@ -617,12 +626,14 @@ impl App {
         let (subtitle, primary, secondary) = preview_texts(&shown);
         let title = shown.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let badge = shown.video.then(|| format!("▶ {}", format_duration(shown.secs)));
+        let hint = if shown.video { "Click to open · Drag to share" } else { "Click to edit · Drag to share" };
         card.show(
             &platform::PreviewContent {
                 image,
                 title: &title,
                 subtitle: &subtitle,
                 badge: badge.as_deref(),
+                hint,
                 primary,
                 secondary,
                 file: &shown.path,
@@ -659,9 +670,14 @@ impl App {
                 // Stay while hovered; linger briefly after the pointer leaves.
                 self.preview_until = (!inside).then(|| Instant::now() + PREVIEW_LINGER);
             }
-            In::Click(Part::Thumb) => {
+            In::Click(Part::Thumb) if shown.video => {
                 platform::open(&shown.path);
                 self.hide_preview();
+            }
+            In::Click(Part::Thumb) => {
+                let (path, saved, copied) = (shown.path.clone(), shown.saved, shown.copied);
+                self.hide_preview();
+                self.open_editor(el, path, saved, copied);
             }
             In::Click(Part::Primary) if shown.saved => {
                 platform::reveal(&shown.path);
@@ -740,7 +756,7 @@ impl App {
                 .with_title_hidden(true)
         };
         let window = el.create_window(attrs).expect("settings window");
-        platform::prepare_settings_window(&window);
+        platform::prepare_app_window(&window);
         let proxy = self.proxy.clone();
         let webview = WebViewBuilder::new()
             .with_html(SETTINGS_HTML)
@@ -894,6 +910,8 @@ impl ApplicationHandler<UserEvent> for App {
             "--shot" => self.start_selection(el, Mode::Shot),
             "--record" => self.start_selection(el, Mode::Video),
             "--settings" => self.open_settings(el),
+            #[cfg(debug_assertions)]
+            a if a.starts_with("--edit=") => self.open_editor(el, PathBuf::from(&a["--edit=".len()..]), true, false),
             // Dev aid: run the capture pipeline on a fixed region, no mouse needed.
             #[cfg(debug_assertions)]
             a if a.starts_with("--test-shot=") || a.starts_with("--test-record=") => {
@@ -972,6 +990,9 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 Err(e) => self.show_error(el, &format!("Screenshot failed: {e}"), rect),
             },
+            UserEvent::EditorIpc(id, msg) => self.editor_ipc(el, id, &msg),
+            UserEvent::EditorCopied(id, result) => self.editor_copied(el, id, result),
+            UserEvent::EditSaved(id, result) => self.edit_saved(el, id, result),
             UserEvent::RecordingDone { rect, result, thumb, secs } => match result.inspect(|p| log(format!("recording saved {p:?}"))) {
                 Ok(p) => {
                     let copied = self.cfg.video_copy_to_clipboard;
@@ -996,6 +1017,9 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn window_event(&mut self, _el: &ActiveEventLoop, id: WindowId, ev: WindowEvent) {
+        if self.editor_window_event(id, &ev) {
+            return;
+        }
         if self.hud.as_ref().is_some_and(|h| h.window.id() == id) {
             if let WindowEvent::MouseInput { state: ElementState::Pressed, .. } = ev {
                 self.stop_recording();
@@ -1115,6 +1139,8 @@ fn main() {
         shown: None,
         preview_until: None,
         settings: None,
+        editors: vec![],
+        next_editor: 0,
         startup_action: std::env::args().nth(1),
     };
     event_loop.run_app(&mut app).expect("run");

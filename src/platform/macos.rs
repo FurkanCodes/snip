@@ -646,6 +646,13 @@ pub fn encode_png(img: &Image, points_wide: f64) -> Option<Vec<u8>> {
     Some(data.to_vec())
 }
 
+/// Decode a PNG (e.g. one the editor produced).
+pub fn decode_png(png: &[u8]) -> Option<Image> {
+    let rep = NSBitmapImageRep::imageRepWithData(&NSData::with_bytes(png))?;
+    let cg = rep.CGImage()?;
+    Some(Image(unsafe { CFRetained::retain(std::ptr::NonNull::from(&*cg)) }))
+}
+
 pub fn copy_png(png: &[u8]) {
     let pb = NSPasteboard::generalPasteboard();
     pb.clearContents();
@@ -719,9 +726,9 @@ pub fn window_id(window: &Window) -> u32 {
     ns_view(window).window().map_or(0, |w| w.windowNumber() as u32)
 }
 
-/// Native look for the settings window: sidebar vibrancy, centred, and kept
-/// visible when we hand focus back after a capture.
-pub fn prepare_settings_window(window: &Window) {
+/// Native look for the settings and editor windows: sidebar vibrancy,
+/// centred, and kept visible when we hand focus back after a capture.
+pub fn prepare_app_window(window: &Window) {
     use window_vibrancy::{NSVisualEffectMaterial, NSVisualEffectState, apply_vibrancy};
     let _ = apply_vibrancy(window, NSVisualEffectMaterial::Sidebar, Some(NSVisualEffectState::FollowsWindowActiveState), None);
     let w = ns_view(window).window().unwrap();

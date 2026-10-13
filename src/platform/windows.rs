@@ -106,6 +106,10 @@ pub fn encode_png(_img: &Image, _points_wide: f64) -> Option<Vec<u8>> {
     None
 }
 
+pub fn decode_png(_png: &[u8]) -> Option<Image> {
+    None
+}
+
 pub fn copy_png(_png: &[u8]) {}
 
 pub fn copy_file(_path: &Path) {}
@@ -138,7 +142,7 @@ pub fn window_id(_window: &Window) -> u32 {
     0
 }
 
-pub fn prepare_settings_window(window: &Window) {
+pub fn prepare_app_window(window: &Window) {
     #[cfg(target_os = "windows")]
     let _ = window_vibrancy::apply_mica(window, None);
     let _ = window;

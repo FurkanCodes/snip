@@ -337,7 +337,6 @@ impl PreviewCard {
         thumb.addSublayer(&thumb_hover);
         let thumb_hint = text_layer(&thumb_hover, &fonts[2], (1.0, 1.0, 1.0, 0.95), scale);
         unsafe { thumb_hint.setAlignmentMode(kCAAlignmentCenter) };
-        set_text(&thumb_hint, "Click to open · Drag to share");
 
         let badge_bg = CALayer::new();
         badge_bg.setBackgroundColor(Some(&rgba(0.0, 0.0, 0.0, 0.62)));
@@ -414,6 +413,7 @@ impl PreviewCard {
             self.thumb_hover.setFrame(rect(0.0, 0.0, THUMB_W, thumb_h));
             let hh = line(2);
             self.thumb_hint.setFrame(rect(0.0, ((thumb_h - hh) / 2.0).round(), THUMB_W, hh));
+            set_text(&self.thumb_hint, c.hint);
 
             self.badge_bg.setHidden(c.badge.is_none());
             if let Some(b) = c.badge {

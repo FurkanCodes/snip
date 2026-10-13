@@ -1,0 +1,844 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snip Editor</title>
+<style>
+  :root {
+    --text: #1d1d1f;
+    --text-2: #6e6e73;
+    --control: rgba(0, 0, 0, 0.055);
+    --control-hover: rgba(0, 0, 0, 0.09);
+    --seg-active: #ffffff;
+    --seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+    --sheet: rgba(246, 246, 248, 0.96);
+    --accent-fallback: #0a84ff;
+    --divider: rgba(0, 0, 0, 0.1);
+    --swatch-ring: rgba(0, 0, 0, 0.3);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --text: #f5f5f7;
+      --text-2: #98989d;
+      --control: rgba(255, 255, 255, 0.08);
+      --control-hover: rgba(255, 255, 255, 0.13);
+      --seg-active: rgba(255, 255, 255, 0.2);
+      --seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+      --sheet: rgba(44, 44, 46, 0.96);
+      --divider: rgba(255, 255, 255, 0.12);
+      --swatch-ring: rgba(255, 255, 255, 0.35);
+    }
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+    color: var(--text);
+    font: 13px/1.35 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { display: flex; flex-direction: column; }
+
+  /* Toolbar, in the title bar: centred on the traffic lights' line */
+  header {
+    height: 32px; flex: none;
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 12px 0 80px;
+  }
+  .group {
+    display: flex; gap: 2px; padding: 2px;
+    border-radius: 8px; background: var(--control);
+  }
+  .tool {
+    all: unset;
+    width: 28px; height: 24px; border-radius: 6px;
+    display: grid; place-items: center;
+    color: var(--text);
+  }
+  .tool:hover { background: var(--control-hover); }
+  .tool.on { background: var(--seg-active); box-shadow: var(--seg-shadow); }
+  .tool:disabled { opacity: 0.35; background: none; }
+  #colors .tool, #sizes .tool { width: 24px; }
+  .tool svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+  .tool svg .fill { fill: currentColor; stroke: none; }
+  .swatch { width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--swatch-ring); }
+  .tool.on .swatch { box-shadow: inset 0 0 0 1px var(--swatch-ring), 0 0 0 2px var(--seg-active), 0 0 0 3.5px var(--text-2); }
+  .dot { border-radius: 50%; background: currentColor; }
+  .spacer { flex: 1; align-self: stretch; }
+
+  .btn {
+    all: unset;
+    height: 24px; padding: 0 12px; border-radius: 6px;
+    display: inline-flex; align-items: center;
+    background: var(--control);
+    font-size: 12.5px; font-weight: 500;
+    white-space: nowrap;
+  }
+  .btn:hover { background: var(--control-hover); }
+  .btn:active { filter: brightness(0.92); }
+  .btn.primary { background: var(--accent-fallback); background: -apple-system-control-accent; color: #fff; }
+  .btn:disabled { opacity: 0.5; }
+
+  /* Image */
+  main {
+    flex: 1; min-height: 0; position: relative;
+    display: grid; place-items: center;
+    padding: 10px 20px 20px;
+  }
+  canvas {
+    display: block;
+    border-radius: 5px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22), 0 0 0 0.5px rgba(0, 0, 0, 0.18);
+  }
+  #text {
+    position: absolute; z-index: 2;
+    padding: 0; border: none; resize: none; overflow: hidden;
+    background: transparent;
+    outline: 1px dashed var(--accent-fallback);
+    outline-offset: 3px;
+    white-space: pre;
+    -webkit-user-select: text; user-select: text;
+  }
+  #cropbar {
+    position: absolute; left: 50%; bottom: 30px; z-index: 2;
+    transform: translateX(-50%);
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 6px 6px 14px; border-radius: 10px;
+    background: var(--sheet);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25), 0 0 0 0.5px var(--divider);
+    color: var(--text-2); font-size: 12px;
+  }
+
+  /* Unsaved changes */
+  #sheet {
+    position: fixed; inset: 0; z-index: 10;
+    display: grid; place-items: center;
+    background: rgba(0, 0, 0, 0.18);
+  }
+  #sheet .box {
+    width: 300px; padding: 20px;
+    border-radius: 12px;
+    background: var(--sheet);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35), 0 0 0 0.5px var(--divider);
+    text-align: center;
+  }
+  #sheet h3 { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  #sheet p { font-size: 12px; color: var(--text-2); margin-bottom: 16px; }
+  #sheet .row { display: flex; gap: 8px; }
+  #sheet .row .btn { flex: 1; justify-content: center; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <header id="bar">
+    <div class="group" id="tools">
+      <button class="tool" data-tool="select" title="Select and move (V)"><svg viewBox="0 0 16 16"><path d="M4 2.5l8.5 6-4 .7-2.2 3.8z"/></svg></button>
+      <button class="tool" data-tool="arrow" title="Arrow (A)"><svg viewBox="0 0 16 16"><path d="M3 13L12.5 3.5M6.5 3.5h6v6"/></svg></button>
+      <button class="tool" data-tool="rect" title="Rectangle (R)"><svg viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5"/></svg></button>
+      <button class="tool" data-tool="pen" title="Pen (P)"><svg viewBox="0 0 16 16"><path d="M2.5 13.5l.8-3.3 7.6-7.6 2.5 2.5-7.6 7.6zM9.4 4.1l2.5 2.5"/></svg></button>
+      <button class="tool" data-tool="hl" title="Highlighter (H)"><svg viewBox="0 0 16 16"><path d="M3 14.5h10M5 12l-.8 1.5h3L7 12M5 12l5.8-5.8a1 1 0 0 0 0-1.4l-.6-.6a1 1 0 0 0-1.4 0L3 10l2 2z"/></svg></button>
+      <button class="tool" data-tool="text" title="Text (T)"><svg viewBox="0 0 16 16"><path d="M3 4.5V3h10v1.5M8 3v10M6 13h4"/></svg></button>
+      <button class="tool" data-tool="pix" title="Pixelate, to hide private details (X)"><svg viewBox="0 0 16 16"><path class="fill" d="M2 2h4v4H2zM10 2h4v4h-4zM6 6h4v4H6zM2 10h4v4H2zM10 10h4v4h-4z"/></svg></button>
+      <button class="tool" data-tool="crop" title="Crop (C)"><svg viewBox="0 0 16 16"><path d="M4.5 1.5v10h10M1.5 4.5h10v10"/></svg></button>
+    </div>
+    <div class="group" id="colors"></div>
+    <div class="group" id="sizes">
+      <button class="tool" data-size="0" title="Thin"><span class="dot" style="width:4px;height:4px"></span></button>
+      <button class="tool" data-size="1" title="Medium"><span class="dot" style="width:7px;height:7px"></span></button>
+      <button class="tool" data-size="2" title="Thick"><span class="dot" style="width:10px;height:10px"></span></button>
+    </div>
+    <div class="group">
+      <button class="tool" id="undo" title="Undo (⌘Z)"><svg viewBox="0 0 16 16"><path d="M5.5 3.5l-3 3 3 3M2.5 6.5h7a3.5 3.5 0 0 1 0 7H7"/></svg></button>
+      <button class="tool" id="redo" title="Redo (⇧⌘Z)"><svg viewBox="0 0 16 16"><path d="M10.5 3.5l3 3-3 3M13.5 6.5h-7a3.5 3.5 0 0 0 0 7H9"/></svg></button>
+    </div>
+    <div class="spacer" id="drag"></div>
+    <button class="btn" id="copy" title="Copy (⌘C)">Copy</button>
+    <button class="btn primary" id="done" title="Save changes (⌘↩)">Done</button>
+  </header>
+
+  <main id="stage">
+    <canvas id="canvas"></canvas>
+    <textarea id="text" hidden spellcheck="false"></textarea>
+    <div id="cropbar" hidden>
+      Drag to choose the area to keep
+      <button class="btn" id="crop-reset">Reset</button>
+      <button class="btn primary" id="crop-done">Crop</button>
+    </div>
+  </main>
+
+  <div id="sheet" hidden>
+    <div class="box">
+      <h3>Save your changes?</h3>
+      <p>Your edits to this screenshot will be lost if you don't save them.</p>
+      <div class="row">
+        <button class="btn" id="discard">Don't Save</button>
+        <button class="btn" id="cancel">Cancel</button>
+        <button class="btn primary" id="save">Save</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const post = (msg) => window.ipc.postMessage(JSON.stringify(msg));
+  const $ = (s) => document.querySelector(s);
+  const $$ = (s) => document.querySelectorAll(s);
+
+  const COLORS = ["#ff3b30", "#ffcc00", "#34c759", "#0a84ff", "#1d1d1f", "#ffffff"];
+  const STROKE = [2, 4, 7]; // points
+  const FONT = [14, 20, 30]; // points
+  const KEYS = { v: "select", a: "arrow", r: "rect", p: "pen", h: "hl", t: "text", x: "pix", c: "crop" };
+  const P3 = { colorSpace: "display-p3" };
+
+  const canvas = $("#canvas");
+  const ctx = canvas.getContext("2d", P3);
+  const stage = $("#stage");
+  const ta = $("#text");
+  const scratch = document.createElement("canvas");
+  const scratchCtx = scratch.getContext("2d", P3);
+
+  let img = null;
+  let scale = 1; // image pixels per point
+  let tool = "arrow";
+  let lastTool = "arrow"; // to return to after cropping
+  let color = COLORS[0];
+  let size = 1;
+  // Everything the user changed, in image pixels. Undo restores snapshots of it.
+  let state = { items: [], crop: null };
+  let initial = "";
+  let undos = [];
+  let redos = [];
+  let draft = null; // shape being drawn
+  let gesture = null; // pointer drag in progress
+  let selected = null; // index of the selected item (select tool)
+  let editing = null; // { item, index } while typing text
+  let saving = false;
+
+  const snapshot = () => JSON.stringify(state);
+  const dirty = () => snapshot() !== initial;
+  const strokeWidth = () => STROKE[size] * scale;
+  const fontSize = () => FONT[size] * scale;
+  const font = (px) => `600 ${px}px -apple-system, system-ui, sans-serif`;
+  const lineHeight = (px) => px * 1.25;
+  const full = () => ({ x: 0, y: 0, w: img.naturalWidth, h: img.naturalHeight });
+  // What the canvas shows: everything while cropping, otherwise the crop.
+  const view = () => (tool === "crop" || !state.crop ? full() : state.crop);
+
+  // --- history -----------------------------------------------------------
+
+  function commit(change) {
+    undos.push(snapshot());
+    redos = [];
+    change();
+    changed();
+  }
+  function changed() {
+    render();
+    $("#undo").disabled = !undos.length;
+    $("#redo").disabled = !redos.length;
+  }
+  function undo() {
+    if (!undos.length) return;
+    redos.push(snapshot());
+    state = JSON.parse(undos.pop());
+    selected = null;
+    changed();
+  }
+  function redo() {
+    if (!redos.length) return;
+    undos.push(snapshot());
+    state = JSON.parse(redos.pop());
+    selected = null;
+    changed();
+  }
+
+  // --- drawing -----------------------------------------------------------
+
+  let frame = 0;
+  function render() {
+    if (!frame) frame = requestAnimationFrame(() => { frame = 0; draw(); });
+  }
+  function draw() {
+    if (!img) return;
+    const v = view();
+    if (canvas.width !== v.w || canvas.height !== v.h) {
+      canvas.width = v.w;
+      canvas.height = v.h;
+      fit();
+    }
+    paint(ctx, v, true);
+  }
+
+  function paint(c, v, ui) {
+    c.setTransform(1, 0, 0, 1, -v.x, -v.y);
+    c.clearRect(v.x, v.y, v.w, v.h);
+    c.drawImage(img, 0, 0);
+    const items = state.items.filter((_, i) => !(editing && editing.index === i));
+    if (ui && draft) items.push(draft);
+    // Pixelation only ever hides the screenshot, never the markup on top.
+    for (const it of items) if (it.t === "pix") drawItem(c, it);
+    for (const it of items) if (it.t !== "pix") drawItem(c, it);
+    if (!ui) return;
+    const px = canvas.width / canvas.getBoundingClientRect().width || 1; // canvas pixels per screen point
+    if (tool === "select" && selected != null && state.items[selected]) outline(c, bounds(state.items[selected]), px);
+    if (tool === "crop") cropShade(c, v, (draft && draft.t === "crop" ? draft : state.crop) || v, px);
+  }
+
+  function shadow(c) {
+    c.shadowColor = "rgba(0, 0, 0, 0.3)";
+    c.shadowBlur = 3 * scale;
+    c.shadowOffsetY = 1 * scale;
+  }
+
+  function drawItem(c, it) {
+    c.save();
+    c.lineCap = "round";
+    c.lineJoin = "round";
+    c.strokeStyle = c.fillStyle = it.c;
+    c.lineWidth = it.lw;
+    switch (it.t) {
+      case "arrow": shadow(c); arrow(c, it); break;
+      case "rect": {
+        shadow(c);
+        c.beginPath();
+        c.roundRect(it.x, it.y, it.w, it.h, Math.min(3 * scale, it.w / 2, it.h / 2));
+        c.stroke();
+        break;
+      }
+      case "pen": shadow(c); strokePoints(c, it.pts); break;
+      case "hl":
+        // Plain translucency: "multiply" would vanish on dark screenshots.
+        c.globalAlpha = 0.4;
+        strokePoints(c, it.pts);
+        break;
+      case "text": {
+        shadow(c);
+        c.font = font(it.size);
+        c.textBaseline = "top";
+        const lh = lineHeight(it.size);
+        it.text.split("\n").forEach((line, i) => c.fillText(line, it.x, it.y + i * lh + (lh - it.size) / 2));
+        break;
+      }
+      case "pix": pixelate(c, it); break;
+    }
+    c.restore();
+  }
+
+  function arrow(c, it) {
+    const len = Math.hypot(it.x2 - it.x1, it.y2 - it.y1);
+    if (len < 1) return;
+    const head = Math.min(len * 0.6, Math.max(it.lw * 3.2, 9 * scale));
+    const a = Math.atan2(it.y2 - it.y1, it.x2 - it.x1);
+    c.beginPath();
+    c.moveTo(it.x1, it.y1);
+    c.lineTo(it.x2 - Math.cos(a) * head * 0.7, it.y2 - Math.sin(a) * head * 0.7);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(it.x2, it.y2);
+    c.lineTo(it.x2 - head * Math.cos(a - 0.45), it.y2 - head * Math.sin(a - 0.45));
+    c.lineTo(it.x2 - head * Math.cos(a + 0.45), it.y2 - head * Math.sin(a + 0.45));
+    c.closePath();
+    c.fill();
+  }
+
+  function strokePoints(c, pts) {
+    c.beginPath();
+    c.moveTo(pts[0][0], pts[0][1]);
+    if (pts.length === 1) c.lineTo(pts[0][0] + 0.01, pts[0][1]);
+    for (let i = 1; i < pts.length - 1; i++) {
+      const [x, y] = pts[i];
+      c.quadraticCurveTo(x, y, (x + pts[i + 1][0]) / 2, (y + pts[i + 1][1]) / 2);
+    }
+    if (pts.length > 1) c.lineTo(...pts[pts.length - 1]);
+    c.stroke();
+  }
+
+  // Average the screenshot into big blocks, so the detail is really gone.
+  function pixelate(c, r) {
+    const x = Math.round(r.x), y = Math.round(r.y), w = Math.round(r.w), h = Math.round(r.h);
+    if (w < 1 || h < 1) return;
+    const block = Math.max(4, Math.round(10 * scale));
+    const tw = Math.ceil(w / block), th = Math.ceil(h / block);
+    scratch.width = tw;
+    scratch.height = th;
+    scratchCtx.imageSmoothingQuality = "high";
+    scratchCtx.drawImage(img, x, y, w, h, 0, 0, tw, th);
+    c.beginPath();
+    c.rect(x, y, w, h);
+    c.clip();
+    c.imageSmoothingEnabled = false;
+    c.drawImage(scratch, 0, 0, tw, th, x, y, tw * block, th * block);
+  }
+
+  function outline(c, b, px) {
+    c.save();
+    c.strokeStyle = "#0a84ff";
+    c.lineWidth = 1.5 * px;
+    c.setLineDash([4 * px, 3 * px]);
+    const pad = 4 * px;
+    c.strokeRect(b.x - pad, b.y - pad, b.w + 2 * pad, b.h + 2 * pad);
+    c.restore();
+  }
+
+  function cropShade(c, v, r, px) {
+    c.save();
+    c.fillStyle = "rgba(0, 0, 0, 0.5)";
+    c.beginPath();
+    c.rect(v.x, v.y, v.w, v.h);
+    c.rect(r.x, r.y, r.w, r.h);
+    c.fill("evenodd");
+    c.strokeStyle = "#fff";
+    c.lineWidth = 1.5 * px;
+    c.strokeRect(r.x, r.y, r.w, r.h);
+    c.restore();
+  }
+
+  // --- geometry ----------------------------------------------------------
+
+  function rectFrom(a, b, square) {
+    let w = b.x - a.x, h = b.y - a.y;
+    if (square) {
+      const s = Math.max(Math.abs(w), Math.abs(h));
+      w = Math.sign(w || 1) * s;
+      h = Math.sign(h || 1) * s;
+    }
+    return { x: Math.min(a.x, a.x + w), y: Math.min(a.y, a.y + h), w: Math.abs(w), h: Math.abs(h) };
+  }
+
+  function textBox(it) {
+    ctx.save();
+    ctx.font = font(it.size);
+    const lines = it.text.split("\n");
+    const w = Math.max(...lines.map((l) => ctx.measureText(l).width));
+    ctx.restore();
+    return { x: it.x, y: it.y, w, h: lines.length * lineHeight(it.size) };
+  }
+
+  function bounds(it) {
+    switch (it.t) {
+      case "arrow": {
+        const p = Math.max(it.lw * 3.2, 9 * scale) / 2;
+        return {
+          x: Math.min(it.x1, it.x2) - p, y: Math.min(it.y1, it.y2) - p,
+          w: Math.abs(it.x2 - it.x1) + 2 * p, h: Math.abs(it.y2 - it.y1) + 2 * p,
+        };
+      }
+      case "pen": case "hl": {
+        const xs = it.pts.map((p) => p[0]), ys = it.pts.map((p) => p[1]);
+        const p = it.lw / 2;
+        const x = Math.min(...xs) - p, y = Math.min(...ys) - p;
+        return { x, y, w: Math.max(...xs) + p - x, h: Math.max(...ys) + p - y };
+      }
+      case "text": return textBox(it);
+      default: return { x: it.x, y: it.y, w: it.w, h: it.h };
+    }
+  }
+
+  function segmentDistance(p, a, b) {
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const t = Math.max(0, Math.min(1, ((p.x - a[0]) * dx + (p.y - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+    return Math.hypot(p.x - a[0] - t * dx, p.y - a[1] - t * dy);
+  }
+
+  const inside = (p, r, pad = 0) =>
+    p.x >= r.x - pad && p.x <= r.x + r.w + pad && p.y >= r.y - pad && p.y <= r.y + r.h + pad;
+
+  /** Topmost item under `p`, optionally only of type `only`. */
+  function hit(p, only) {
+    const tol = 6 * scale;
+    for (let i = state.items.length - 1; i >= 0; i--) {
+      const it = state.items[i];
+      if (only && it.t !== only) continue;
+      const reach = (it.lw || 0) / 2 + tol;
+      let on = false;
+      switch (it.t) {
+        case "arrow": on = segmentDistance(p, [it.x1, it.y1], [it.x2, it.y2]) <= reach; break;
+        case "pen": case "hl":
+          on = it.pts.some((pt, j) => segmentDistance(p, pt, it.pts[j + 1] || pt) <= reach);
+          break;
+        // A rectangle is picked by its edge, so shapes inside it stay clickable.
+        case "rect": on = inside(p, it, reach) && !inside(p, { x: it.x + reach, y: it.y + reach, w: it.w - 2 * reach, h: it.h - 2 * reach }); break;
+        case "text": on = inside(p, textBox(it), 4 * scale); break;
+        case "pix": on = inside(p, it); break;
+      }
+      if (on) return i;
+    }
+    return null;
+  }
+
+  function move(it, dx, dy) {
+    if (it.t === "arrow") { it.x1 += dx; it.y1 += dy; it.x2 += dx; it.y2 += dy; }
+    else if (it.pts) it.pts = it.pts.map(([x, y]) => [x + dx, y + dy]);
+    else { it.x += dx; it.y += dy; }
+  }
+
+  /** Pointer position in image pixels, kept inside what's shown. */
+  function toImage(e) {
+    const r = canvas.getBoundingClientRect(), v = view();
+    const k = canvas.width / r.width;
+    return {
+      x: Math.min(Math.max((e.clientX - r.left) * k + v.x, v.x), v.x + v.w),
+      y: Math.min(Math.max((e.clientY - r.top) * k + v.y, v.y), v.y + v.h),
+    };
+  }
+
+  // --- pointer -----------------------------------------------------------
+
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || !img || saving) return;
+    if (editing) return finishText(); // a click away ends typing
+    const p = toImage(e);
+    canvas.setPointerCapture(e.pointerId);
+    switch (tool) {
+      case "select":
+        selected = hit(p);
+        if (selected != null) gesture = { kind: "move", last: p, before: snapshot(), moved: false };
+        render();
+        return;
+      case "text": {
+        const i = hit(p, "text");
+        if (i != null) editText(state.items[i], i);
+        else editText({ t: "text", c: color, size: fontSize(), x: p.x, y: p.y - fontSize() * 0.6, text: "" }, null);
+        return;
+      }
+      case "arrow": draft = { t: "arrow", c: color, lw: strokeWidth(), x1: p.x, y1: p.y, x2: p.x, y2: p.y }; break;
+      case "pen": case "hl":
+        draft = { t: tool, c: color, lw: tool === "hl" ? strokeWidth() * 4 : strokeWidth(), pts: [[p.x, p.y]] };
+        break;
+      case "rect": draft = { t: "rect", c: color, lw: strokeWidth(), x: p.x, y: p.y, w: 0, h: 0 }; break;
+      case "pix": draft = { t: "pix", x: p.x, y: p.y, w: 0, h: 0 }; break;
+      case "crop": draft = { t: "crop", x: p.x, y: p.y, w: 0, h: 0 }; break;
+    }
+    gesture = { kind: "draw", start: p };
+  });
+
+  canvas.addEventListener("dblclick", (e) => {
+    if (tool !== "select" || editing) return;
+    const i = hit(toImage(e), "text");
+    if (i != null) editText(state.items[i], i);
+  });
+
+  // Keep focus where it is (e.g. in a text box that was just opened).
+  canvas.addEventListener("mousedown", (e) => e.preventDefault());
+
+  canvas.addEventListener("pointermove", (e) => {
+    if (!img) return;
+    const p = toImage(e);
+    if (!gesture) {
+      if (tool === "select") canvas.style.cursor = hit(p) != null ? "move" : "default";
+      if (tool === "text") canvas.style.cursor = hit(p, "text") != null ? "pointer" : "text";
+      return;
+    }
+    if (gesture.kind === "move") {
+      move(state.items[selected], p.x - gesture.last.x, p.y - gesture.last.y);
+      gesture.last = p;
+      gesture.moved = true;
+    } else if (draft.t === "arrow") {
+      let { x, y } = p;
+      if (e.shiftKey) {
+        // Snap to 45°.
+        const a = Math.round(Math.atan2(y - draft.y1, x - draft.x1) / (Math.PI / 4)) * (Math.PI / 4);
+        const len = Math.hypot(x - draft.x1, y - draft.y1);
+        x = draft.x1 + Math.cos(a) * len;
+        y = draft.y1 + Math.sin(a) * len;
+      }
+      draft.x2 = x;
+      draft.y2 = y;
+    } else if (draft.pts) {
+      const last = draft.pts[draft.pts.length - 1];
+      if (Math.hypot(p.x - last[0], p.y - last[1]) >= scale) draft.pts.push([p.x, p.y]);
+    } else {
+      Object.assign(draft, rectFrom(gesture.start, p, e.shiftKey && draft.t === "rect"));
+    }
+    render();
+  });
+
+  function endGesture() {
+    const g = gesture, d = draft;
+    gesture = null;
+    draft = null;
+    if (!g) return;
+    if (g.kind === "move") {
+      if (g.moved) {
+        undos.push(g.before);
+        redos = [];
+        changed();
+      }
+      return;
+    }
+    const min = 3 * scale;
+    if (d.t === "crop") {
+      const r = { x: Math.round(d.x), y: Math.round(d.y), w: Math.round(d.w), h: Math.round(d.h) };
+      if (r.w >= min && r.h >= min) commit(() => (state.crop = r));
+      else render();
+    } else if (d.t === "arrow" ? Math.hypot(d.x2 - d.x1, d.y2 - d.y1) >= min : d.pts || (d.w >= min && d.h >= min)) {
+      commit(() => state.items.push(d));
+    } else {
+      render();
+    }
+  }
+  canvas.addEventListener("pointerup", endGesture);
+  canvas.addEventListener("pointercancel", endGesture);
+
+  // --- text --------------------------------------------------------------
+
+  function editText(item, index) {
+    editing = { item: { ...item }, index };
+    ta.value = item.text;
+    ta.style.color = item.c;
+    ta.hidden = false;
+    placeText();
+    ta.focus();
+    render();
+  }
+
+  function placeText() {
+    if (!editing) return;
+    const r = canvas.getBoundingClientRect(), s = stage.getBoundingClientRect(), v = view();
+    const k = r.width / canvas.width;
+    const it = editing.item;
+    ta.style.left = r.left - s.left + (it.x - v.x) * k + "px";
+    ta.style.top = r.top - s.top + (it.y - v.y) * k + "px";
+    ta.style.font = font(it.size * k);
+    ta.style.lineHeight = lineHeight(it.size * k) + "px";
+    ta.style.width = "1px";
+    ta.style.width = ta.scrollWidth + it.size * k * 0.6 + "px";
+    ta.style.height = "1px";
+    ta.style.height = ta.scrollHeight + "px";
+  }
+
+  function finishText() {
+    if (!editing) return;
+    const { item, index } = editing;
+    editing = null;
+    ta.hidden = true;
+    ta.blur();
+    const text = ta.value.replace(/\s+$/, "");
+    const old = index == null ? null : state.items[index];
+    if (index == null && text) commit(() => state.items.push({ ...item, text }));
+    else if (old && !text) commit(() => state.items.splice(index, 1));
+    else if (old && (text !== old.text || item.c !== old.c || item.size !== old.size))
+      commit(() => (state.items[index] = { ...item, text }));
+    else render();
+  }
+
+  ta.addEventListener("input", placeText);
+  ta.addEventListener("blur", finishText);
+  ta.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Escape" || (e.key === "Enter" && !e.shiftKey)) {
+      e.preventDefault();
+      finishText();
+    }
+  });
+
+  // --- toolbar -----------------------------------------------------------
+
+  function setTool(t) {
+    finishText();
+    const prev = tool;
+    if (t !== "crop") lastTool = t;
+    tool = t;
+    draft = null;
+    if (t !== "select") selected = null;
+    // A red highlighter is rarely wanted; start it yellow.
+    if (t === "hl" && prev !== "hl" && color === COLORS[0]) setColor(COLORS[1]);
+    $$("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === t));
+    $("#cropbar").hidden = t !== "crop";
+    canvas.style.cursor = { select: "default", text: "text" }[t] || "crosshair";
+    render();
+  }
+
+  function setColor(c) {
+    color = c;
+    $$("[data-color]").forEach((b) => b.classList.toggle("on", b.dataset.color === c));
+    if (editing) {
+      editing.item.c = c;
+      ta.style.color = c;
+    } else if (tool === "select" && selected != null && state.items[selected].c) {
+      commit(() => (state.items[selected].c = c));
+    }
+  }
+
+  function setSize(s) {
+    size = s;
+    $$("[data-size]").forEach((b) => b.classList.toggle("on", +b.dataset.size === s));
+    const it = editing ? editing.item : tool === "select" && selected != null ? state.items[selected] : null;
+    if (!it) return;
+    if (editing) {
+      it.size = fontSize();
+      placeText();
+    } else if (it.t === "text") {
+      commit(() => (it.size = fontSize()));
+    } else if (it.lw) {
+      commit(() => (it.lw = it.t === "hl" ? strokeWidth() * 4 : strokeWidth()));
+    }
+  }
+
+  $("#colors").innerHTML = COLORS.map(
+    (c) => `<button class="tool" data-color="${c}"><span class="swatch" style="background:${c}"></span></button>`
+  ).join("");
+  $$("[data-tool]").forEach((b) => b.addEventListener("click", () => setTool(b.dataset.tool)));
+  $$("[data-color]").forEach((b) => b.addEventListener("click", () => setColor(b.dataset.color)));
+  $$("[data-size]").forEach((b) => b.addEventListener("click", () => setSize(+b.dataset.size)));
+  // Toolbar buttons shouldn't take focus away from text being typed.
+  $$("header button").forEach((b) => b.addEventListener("mousedown", (e) => e.preventDefault()));
+  $("#undo").addEventListener("click", undo);
+  $("#redo").addEventListener("click", redo);
+  $("#copy").addEventListener("click", copy);
+  $("#done").addEventListener("click", done);
+  $("#crop-done").addEventListener("click", () => setTool(lastTool));
+  $("#crop-reset").addEventListener("click", () => state.crop && commit(() => (state.crop = null)));
+  $("#discard").addEventListener("click", () => post({ type: "close" }));
+  $("#cancel").addEventListener("click", () => ($("#sheet").hidden = true));
+  $("#save").addEventListener("click", () => { $("#sheet").hidden = true; done(); });
+  $("#bar").addEventListener("mousedown", (e) => {
+    if (e.button === 0 && (e.target.id === "bar" || e.target.id === "drag")) post({ type: "drag" });
+  });
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  document.addEventListener("keydown", (e) => {
+    const k = e.key.toLowerCase();
+    if (!$("#sheet").hidden) {
+      if (k === "escape") $("#sheet").hidden = true;
+      if (k === "enter") $("#save").click();
+      return;
+    }
+    if (e.metaKey) {
+      const action = { z: e.shiftKey ? redo : undo, c: copy, w: requestClose, enter: done }[k];
+      if (action) {
+        e.preventDefault();
+        action();
+      }
+      return;
+    }
+    if (gesture || e.ctrlKey || e.altKey) return;
+    if (k === "escape") {
+      if (tool === "crop") setTool(lastTool);
+      else if (selected != null) { selected = null; render(); }
+      else requestClose();
+    } else if (k === "enter" && tool === "crop") {
+      setTool(lastTool);
+    } else if ((k === "backspace" || k === "delete") && selected != null) {
+      const i = selected;
+      selected = null;
+      commit(() => state.items.splice(i, 1));
+    } else if (KEYS[k]) {
+      setTool(KEYS[k]);
+    }
+  });
+
+  // --- layout ------------------------------------------------------------
+
+  /** Size the canvas to fit the window, never larger than on screen. */
+  function fit() {
+    if (!img) return;
+    const v = view();
+    const nw = v.w / scale, nh = v.h / scale;
+    const k = Math.min((stage.clientWidth - 40) / nw, (stage.clientHeight - 30) / nh, 1);
+    canvas.style.width = Math.max(1, Math.floor(nw * k)) + "px";
+    canvas.style.height = Math.max(1, Math.floor(nh * k)) + "px";
+    placeText();
+  }
+  new ResizeObserver(() => { fit(); render(); }).observe(stage);
+
+  // --- output ------------------------------------------------------------
+
+  /** The edited image as base64 PNG. */
+  function exportPng() {
+    finishText();
+    return new Promise((resolve, reject) => {
+      const v = state.crop || full();
+      const out = document.createElement("canvas");
+      out.width = v.w;
+      out.height = v.h;
+      paint(out.getContext("2d", P3), v, false);
+      out.toBlob((blob) => {
+        if (!blob) return reject(new Error("Couldn't export the image"));
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.slice(reader.result.indexOf(",") + 1));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      }, "image/png");
+    });
+  }
+
+  function saveFailed() {
+    saving = false;
+    $("#done").disabled = $("#copy").disabled = false;
+    $("#done").textContent = "Done";
+  }
+  function fail(err) {
+    saveFailed();
+    post({ type: "error", message: String((err && err.message) || err) });
+  }
+
+  function copy() {
+    if (!img || saving) return;
+    exportPng().then((png) => post({ type: "copy", png }), fail);
+  }
+
+  function done() {
+    if (!img || saving) return;
+    finishText();
+    if (!dirty()) return post({ type: "close" });
+    saving = true;
+    $("#done").disabled = $("#copy").disabled = true;
+    $("#done").textContent = "Saving…";
+    exportPng().then((png) => post({ type: "done", png }), fail);
+  }
+
+  function requestClose() {
+    finishText();
+    if (saving) return;
+    if (img && dirty()) $("#sheet").hidden = false;
+    else post({ type: "close" });
+  }
+
+  // --- startup -----------------------------------------------------------
+
+  let copiedTimer = 0;
+  let ready;
+  const loaded = new Promise((resolve) => (ready = resolve));
+
+  window.editor = {
+    load(info) { ready(info); },
+    requestClose,
+    failed: saveFailed,
+    copied() {
+      const b = $("#copy");
+      b.textContent = "Copied ✓";
+      clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => (b.textContent = "Copy"), 1500);
+    },
+  };
+
+  const image = new Image();
+  image.src = "image.png";
+  Promise.all([loaded, image.decode()]).then(
+    ([info]) => {
+      scale = info.scale || 1;
+      img = image;
+      initial = snapshot();
+      setTool("arrow");
+      setColor(COLORS[0]);
+      setSize(1);
+      changed();
+    },
+    () => {
+      post({ type: "error", message: "Couldn't load the screenshot" });
+      post({ type: "close" });
+    }
+  );
+
+  post({ type: "ready" });
+})();
+</script>
+</body>
+</html>

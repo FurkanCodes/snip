@@ -122,6 +122,8 @@ pub struct PreviewContent<'a> {
     pub subtitle: &'a str,
     /// Small label over the thumbnail, e.g. a video duration.
     pub badge: Option<&'a str>,
+    /// Shown over the thumbnail while it is hovered.
+    pub hint: &'a str,
     pub primary: &'a str,
     pub secondary: &'a str,
     /// File that dragging the thumbnail hands to other apps.
